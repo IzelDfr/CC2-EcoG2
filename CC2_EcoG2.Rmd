@@ -1,0 +1,204 @@
+---
+title: "CC2_ECOG2"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{bash}
+sudo apt-get update -y
+sudo apt-get install -y libglpk-dev 
+sudo apt-get install -y liblzma-dev libbz2-dev
+```
+
+```{r}
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+BiocManager::install("BiocStyle")
+BiocManager::install("Rhtslib")
+```
+
+```{r}
+library("knitr")
+library("BiocStyle")
+.cran_packages <- c("ggplot2", "gridExtra", "devtools")
+install.packages(.cran_packages) 
+.bioc_packages <- c("dada2", "phyloseq", "DECIPHER", "phangorn")
+BiocManager::install(.bioc_packages)
+# Load packages into session, and print package version
+sapply(c(.cran_packages, .bioc_packages), require, character.only = TRUE)
+```
+
+```{r}
+.cran_packages <- c( "shiny","miniUI", "caret", "pls", "e1071", "ggplot2", "randomForest", "dplyr", "ggrepel", "nlme", "devtools",
+                  "reshape2", "PMA", "structSSI", "ade4",
+                  "ggnetwork", "intergraph", "scales")
+.github_packages <- c("jfukuyama/phyloseqGraphTest")
+.bioc_packages <- c("genefilter", "impute")
+```
+
+```{r}
+.inst <- .cran_packages %in% installed.packages()
+if (any(!.inst)){
+  install.packages(.cran_packages[!.inst],repos = "http://cran.rstudio.com/")
+}
+
+```
+
+```{r}
+.inst <- .github_packages %in% installed.packages()
+if (any(!.inst)){
+  devtools::install_github(.github_packages[!.inst])
+}
+
+.inst <- .bioc_packages %in% installed.packages()
+if(any(!.inst)){BiocManager::install(.bioc_packages[!.inst])
+}
+
+```
+
+Pour la taxonomie
+```{r}
+.cran_packages <- c( "shiny","miniUI", "caret", "pls", "e1071", "ggplot2", "randomForest", "dplyr", "ggrepel", "nlme", "devtools",
+                  "reshape2", "PMA", "structSSI", "ade4",
+                  "ggnetwork", "intergraph", "scales")
+.github_packages <- c("jfukuyama/phyloseqGraphTest")
+.bioc_packages <- c("genefilter", "impute")
+# Install CRAN packages (if not already installed)
+.inst <- .cran_packages %in% installed.packages()
+if (any(!.inst)){
+  install.packages(.cran_packages[!.inst],repos = "http://cran.rstudio.com/")
+}
+.inst <- .github_packages %in% installed.packages()
+if (any(!.inst)){
+  devtools::install_github(.github_packages[!.inst])
+}
+
+.inst <- .bioc_packages %in% installed.packages()
+if(any(!.inst)){
+  source("http://bioconductor.org/biocLite.R")
+  biocLite(.bioc_packages[!.inst])
+}
+```
+
+```{r}
+set.seed(100)
+coraux <- "/home/rstudio/mydatalocal/CC2-EcoG2/ERR"
+list.files(coraux)
+```
+Ce fichier contient 49 séquences. les "_1" correspondent aux reads1 et les "_2" correspondent reads 2.
+
+
+LECTURE DES FICHIERS (filtrer et rogner)
+```{r}
+#On tri pour que les reads "fnRs" soit lu dans le même ordre que les forward "fnFs"
+fnFs <- sort(list.files(coraux, pattern="_1.fastq.gz"))
+fnRs <- sort(list.files(coraux, pattern="_2.fastq.gz"))
+```
+
+Ici on prend le 1er élément de Fnfs en tant que liste séparée par des "_" et strip prend le premier élément de cette liste. 
+On transforme un nom de fichier en nom d'échantillon (ici première partie de la liste)
+```{r}
+sampleNames <- sapply(strsplit(fnFs, "_"), `[`, 1)
+
+# Specify the full path to the fnFs and fnRs
+fnFs <- file.path(coraux, fnFs)
+fnRs <- file.path(coraux, fnRs)
+
+#On affiche les 3 premiers éléments de la liste, où ils sont enregistrés.
+fnFs[1:3]
+fnRs[1:3]
+```
+La ligne verte correspond à la moyenne des scores de qualités pour tous le fichier.
+La ligne rouge correspond à la proportion des reads qui vont au moins jusqu'à la position de cette ligne.
+```{r}
+#Dans les forwards, on remarque que les erreurs s'accumulent sur les fins de séquences, surtout à partir du nucléotides 260 (environ), puisqu'en effet le score de qualité passe de 30 à presque 10, engendrant ainsi une perte de la qualité de la séquence.
+#Du premier nucléotides jusqu'au 200ème, le Qscore reste entre 38 et 33.
+
+plotQualityProfile(fnFs[1:2])
+```
+
+```{r}
+#Ici on remarque que les séquences sont de qualité bien moindre que les précédentes, puisque le Qscore décroît beaucoup plus tôt, et varie davantages.
+plotQualityProfile(fnRs[1:2])
+```
+Ces graphiques servent à définir les séquences de mauvaises qualités. A partir de la, on va filtrer les séquences en retirant les bases qui ont un score de qualité trop faible, et créer un nouveau fichier contenant ces nouvelles séquences. 
+
+On filtre les fichiers
+```{r}
+filt_path <- file.path(coraux, "filtered")
+if(!file_test("-d", filt_path)) dir.create(filt_path)
+filtFs <- file.path(filt_path, paste0(sampleNames, "_F_filt.fastq.gz"))
+filtRs <- file.path(filt_path, paste0(sampleNames, "_R_filt.fastq.gz"))
+```
+
+Création d'une variable "out" qui reçoit le résultat de la fonction FilterAndTrim qui décrit ce qu'est chaque argument.
+Le 5e argument "trunclen c" permet de créer une variable à 2 valeurs: une pour les forwards l'autre pour les reverse.
+```{r}
+out <- filterAndTrim(fnFs, filtFs, fnRs, filtRs, truncLen=c(240,160),
+              maxN=0, maxEE=c(2,2), truncQ=2, rm.phix=TRUE,
+              compress=TRUE, multithread=TRUE)
+head(out)
+```
+
+DEPLICATION: ici les séquences identiques ne sont gardés qu'une seule fois (les autres sont gardées en mémoire)
+```{r}
+derepFs <- derepFastq(filtFs, verbose=TRUE)
+derepRs <- derepFastq(filtRs, verbose=TRUE)
+
+#Reçoient les noms des échantillons
+names(derepFs) <- sampleNames
+names(derepRs) <- sampleNames
+
+errF <- learnErrors(filtFs, multithread=TRUE)
+errR <- learnErrors(filtRs, multithread=TRUE)
+```
+
+L'axe des abscisses correspond à la moyenne des Qscore pour les différentes positions
+L'axe des ordonnées correspond à la fréquence des erreurs observées par dada2
+```{r}
+plotErrors(errF)
+```
+
+```{r}
+plotErrors(errR)
+```
+
+On utilise la fonction dada pour calculer les erreurs dans les reads à partir des profils d'erreurs calculés précédemment. Cela aboutit à un jeu de données dans erreur de séquençage.
+```{r}
+dadaFs <- dada(derepFs, err=errF, multithread=TRUE)
+dadaRs <- dada(derepRs, err=errR, multithread=TRUE)
+
+dadaFs[[1]]
+```
+
+Construire une table de sq & supprimer les chimères
+```{r}
+#On aligne les forwards et les reverses en 1 seul fragment qui couvre toute la portion V4 du gène.
+mergers <- mergePairs(dadaFs, derepFs, dadaRs, derepRs)
+
+#On créer une table de séquence représentant le nombre de fois ou chaque ASV est présent dans chacun des échantillons.
+seqtabAll <- makeSequenceTable(mergers[!grepl("Mock", names(mergers))])
+table(nchar(getSequences(seqtabAll)))
+seqtabNoC <- removeBimeraDenovo(seqtabAll)
+```
+
+CONSTRUIRE UN ARBRE PHYLOGENETIQUE
+```{r}
+seqs <- getSequences(seqtabNoC)
+names(seqs) <- seqs
+alignment <- AlignSeqs(DNAStringSet(seqs), anchor=NA,verbose=FALSE)
+
+phangAlign <- phyDat(as(alignment, "matrix"), type="DNA")
+dm <- dist.ml(phangAlign)
+treeNJ <- NJ(dm)
+fit = pml(treeNJ, data=phangAlign)
+fitGTR <- update(fit, k=4, inv=0.2)
+
+#Cette ligne en dessous a tournée plusieurs fois pendant 3 à 5h, je trouve ca bizarre que ca charge aussi longtemps, je ne sais pas pour quelle raison. Je n'ai donc pas pu continuer la suite.. Je met un # devant sinon le knit ne fonctionne pas.
+#fitGTR <- optim.pml(fitGTR, model="GTR", optInv=TRUE, optGamma=TRUE,
+        #rearrangement = "stochastic", control = pml.control(trace = 0))
+#detach("package:phangorn", unload=TRUE)
+```
