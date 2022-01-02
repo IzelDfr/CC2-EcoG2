@@ -202,3 +202,7 @@ fitGTR <- update(fit, k=4, inv=0.2)
         #rearrangement = "stochastic", control = pml.control(trace = 0))
 #detach("package:phangorn", unload=TRUE)
 ```
+
+
+
+
